@@ -1,0 +1,68 @@
+name: Native release binaries
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linuxX64
+            runner: ubuntu-24.04
+            task: packageReleaseLinuxX64
+            executable: gtnh-updater
+          - target: linuxArm64
+            runner: ubuntu-24.04
+            task: packageReleaseLinuxArm64
+            executable: gtnh-updater
+          - target: macosX64
+            runner: macos-15-intel
+            task: packageReleaseMacosX64
+            executable: gtnh-updater
+          - target: macosArm64
+            runner: macos-15
+            task: packageReleaseMacosArm64
+            executable: gtnh-updater
+          - target: mingwX64
+            runner: windows-2025
+            task: packageReleaseMingwX64
+            executable: gtnh-updater.exe
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: '25'
+
+      - name: Build release executable (Unix)
+        if: runner.os != 'Windows'
+        run: ./gradlew --no-daemon "${{ matrix.task }}"
+
+      - name: Build release executable (Windows)
+        if: runner.os == 'Windows'
+        run: .\gradlew.bat --no-daemon "${{ matrix.task }}"
+
+      - name: Run release executable
+        if: matrix.target != 'linuxArm64'
+        shell: bash
+        run: "./build/release/${{ matrix.target }}/${{ matrix.executable }}"
+
+      - name: Archive executable with its permissions
+        shell: bash
+        run: tar -czf "gtnh-updater-${{ matrix.target }}.tar.gz" -C "build/release/${{ matrix.target }}" "${{ matrix.executable }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gtnh-updater-${{ matrix.target }}
+          path: gtnh-updater-${{ matrix.target }}.tar.gz
+          if-no-files-found: error

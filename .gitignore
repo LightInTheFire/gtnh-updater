@@ -1,0 +1,19 @@
+# Gradle and Kotlin/Native
+.gradle/
+.kotlin/
+.konan/
+/build/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+/out/
+
+# Operating systems
+*~
+.DS_Store
+.AppleDouble
+Thumbs.db
+Desktop.ini

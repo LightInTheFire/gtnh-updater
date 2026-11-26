@@ -59,7 +59,8 @@ jobs:
       - name: Run release executable
         if: matrix.target != 'linuxArm64'
         shell: bash
-        run: "./build/release/${{ matrix.target }}/${{ matrix.executable }}" --help
+        run: |
+          "./build/release/${{ matrix.target }}/${{ matrix.executable }}" --help
 
       - name: Archive executable with its permissions
         shell: bash

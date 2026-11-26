@@ -3,6 +3,7 @@
 .kotlin/
 .konan/
 /build/
+/core/build/
 
 # IntelliJ IDEA
 .idea/

@@ -35,6 +35,12 @@ kotlin {
     }
 
     sourceSets {
+        commonMain.dependencies {
+            implementation(project(":core"))
+            implementation("com.github.ajalt.mordant:mordant:3.1.1")
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+            implementation("org.jetbrains.kotlinx:atomicfu:0.33.0")
+        }
         commonTest.dependencies {
             implementation(kotlin("test"))
         }

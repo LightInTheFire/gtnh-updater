@@ -5,7 +5,19 @@ plugins {
 }
 
 group = "ru.light"
-version = "0.2.0"
+version = "0.2.1"
+
+val appVersion = version.toString()
+val appVersionSources = layout.buildDirectory.dir("generated/appVersion")
+val generateAppVersion = tasks.register("generateAppVersion") {
+    inputs.property("appVersion", appVersion)
+    outputs.dir(appVersionSources)
+    doLast {
+        val source = appVersionSources.get().file("AppVersion.kt").asFile
+        source.parentFile.mkdirs()
+        source.writeText("package ru.light.gtnh.updater\n\ninternal const val APP_VERSION = \"$appVersion\"\n")
+    }
+}
 
 repositories {
     mavenCentral()
@@ -35,6 +47,9 @@ kotlin {
     }
 
     sourceSets {
+        commonMain {
+            kotlin.srcDir(files(appVersionSources).builtBy(generateAppVersion))
+        }
         commonMain.dependencies {
             implementation(project(":core"))
             implementation("com.github.ajalt.mordant:mordant:3.1.1")

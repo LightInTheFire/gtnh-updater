@@ -146,10 +146,8 @@ private fun runPreparationProgress(
                                 val liveVersion = if (stage == UpdateStage.ACTIVATED) prepared.targetVersion else prepared.currentVersion
                                 add(" Active version: ${liveVersion?.terminalText() ?: "Unknown"}" to "")
                                 val instructions = when {
-                                    confirmSwitch && stage == UpdateStage.ACTIVATED ->
-                                        " Close both Minecraft instances and Prism before pressing Y to restore."
-                                    confirmSwitch -> " Close both Minecraft instances and Prism before pressing Y to activate."
-                                    stage == UpdateStage.ACTIVATED -> " Open the original entry in Prism to play. F8 restores the previous copy."
+                                    confirmSwitch -> " Quit Minecraft and fully exit Prism before confirming the switch."
+                                    stage == UpdateStage.ACTIVATED -> " Reopen Prism and select the updated entry. The old copy is marked [Backup ...]."
                                     stage == UpdateStage.ROLLED_BACK -> " The newer copy, including its worlds, is preserved below."
                                     testing -> " Reach the Minecraft main menu, quit the game, then press F4."
                                     migrated -> " Migration complete. Activate the update at the original path."
@@ -159,6 +157,9 @@ private fun runPreparationProgress(
                                     else -> " Test launch the candidate before reviewing configs."
                                 }
                                 add(instructions to if (testing || confirmSwitch) TEST_INSTRUCTION_STYLE else "")
+                                if (confirmSwitch) {
+                                    add(" An open launcher can overwrite instance names with old values." to TEST_INSTRUCTION_STYLE)
+                                }
                                 launchStatus?.let { add(" ${it.terminalText()}" to SECTION_STYLE) }
                                 if (confirmSwitch || stage == UpdateStage.ACTIVATED || stage == UpdateStage.ROLLED_BACK) {
                                     add(" Active path: ${prepared.source.toString().terminalText()}" to "")

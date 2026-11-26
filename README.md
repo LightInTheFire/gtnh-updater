@@ -54,6 +54,17 @@ with its execute permission preserved. The Windows ZIP contains
 `gtnh-updater.exe`. Upload the five archives and `SHA256SUMS` from the
 tag's bundle as individual GitHub Release assets.
 
+## Diagnostic log
+
+The terminal UI and command line write a local log to
+`~/.gtnh-updater/updater.log` (`%USERPROFILE%/.gtnh-updater/updater.log` on
+Windows). Attach it to a bug report after reproducing an issue. Entries
+include UTC timestamps, a session identifier, the application version at
+session start, operation outcomes, and exception types. The log excludes
+exception messages, tokens, URLs, local paths, and configuration contents.
+At 1 MiB logging pauses for the rest of the session. On the next launch
+the file is rotated to `updater.previous.log`.
+
 ## Settings
 
 The first interactive launch opens setup and fetches the release catalogs
@@ -204,9 +215,10 @@ are preselected. For an instance without an inventory, select the JARs you
 added. The target pack's own mod versions are kept.
 After migration, press Enter to continue to activation or Escape to
 return to the channel menu. From the channel menu, press F6 to resume.
-Press F7 or Enter to review activation. Close both Minecraft instances
-and Prism Launcher, then press Y to confirm. The migrated instance takes
-over the original instance path. Reopen Prism to use the original entry.
+Press F7 or Enter to review activation. Quit Minecraft and fully exit Prism
+Launcher before pressing Y. An open launcher can overwrite the display names
+with cached values. The migrated instance takes over the original path and the
+old copy is marked `[Backup …]`. Reopen Prism to see the new entries.
 
 Unselected changes keep the target's content. A saved choice is preselected
 when the same change and context recur. Choices are stored as fingerprints

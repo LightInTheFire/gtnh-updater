@@ -182,6 +182,166 @@ class ConfigMigrationTest {
     }
 
     @Test
+    fun restoresCandidateAfterCancellationDuringPlayerDataCopy() = withInstances { root, prepared ->
+        val source = prepared.source / ".minecraft"
+        val target = prepared.candidate / ".minecraft"
+        fs.put(source / "screenshots/old.png", "old photo")
+        fs.put(target / "screenshots/new.png", "new photo")
+        val migration = ConfigMigration(fs, root)
+        val review = migration.review(prepared)
+
+        assertFailsWith<kotlinx.coroutines.CancellationException> {
+            migration.apply(prepared, review, emptyMap(), migratePlayerData = true) {
+                if (it.copiedFiles > 0) throw kotlinx.coroutines.CancellationException()
+            }
+        }
+        assertEquals("new photo", fs.text(target / "screenshots/new.png"))
+        assertFalse(fs.exists(target / "screenshots/old.png"))
+        assertFalse(fs.exists(target / MIGRATION_WORK))
+        assertFalse(fs.exists(target / MIGRATION_MARKER))
+    }
+
+    @Test
+    fun migratesPlayerDataWithoutReviewingOrChangingNewConfigs() = withInstances { root, prepared ->
+        val source = prepared.source / ".minecraft"
+        val target = prepared.candidate / ".minecraft"
+        fs.put(source / "config/test.cfg", "setting=old\n")
+        fs.put(target / "config/test.cfg", "setting=new\n")
+        fs.put(source / "options.txt", "resourcePacks:[old.zip]\n")
+        fs.put(target / "options.txt", "resourcePacks:[]\n")
+        fs.put(source / "saves/world/level.dat", "world")
+        val migration = ConfigMigration(fs, root)
+
+        val review = migration.review(prepared, keepNewConfigs = true)
+        assertTrue(review.changes.isEmpty())
+        assertEquals(
+            MigrationResult(0, 1),
+            migration.apply(prepared, review, emptyMap(), migratePlayerData = true, includeMinecraftSettings = false),
+        )
+        assertEquals("setting=new\n", fs.text(target / "config/test.cfg"))
+        assertEquals("resourcePacks:[]\n", fs.text(target / "options.txt"))
+        assertEquals("world", fs.text(target / "saves/world/level.dat"))
+    }
+
+    @Test
+    fun carriesCompatibleAngelicaFontsAndShowsOtherChanges() = withInstances { root, prepared ->
+        val path = ".minecraft/config/angelica.cfg"
+        val old = """
+            customfont {
+                S:customFontNamePrimary=JetBrainsMono NF Regular
+                S:customFontNameFallback=JetBrainsMono NF Regular
+                B:enableCustomFont=true
+                I:fontAAMode=2
+            }
+            renderer {
+                B:someFeature=false
+            }
+        """.trimIndent()
+        val new = """
+            customfont {
+                S:customFontNamePrimary=(none)
+                S:customFontNameFallback=(none)
+                B:enableCustomFont=false
+                # The new mode range. [range: 0 ~ 1, default: 1]
+                I:fontAAMode=1
+            }
+            renderer {
+                B:someFeature=true
+            }
+        """.trimIndent()
+        fs.put(prepared.source / path, old)
+        fs.put(prepared.candidate / path, new)
+        val migration = ConfigMigration(fs, root)
+        val review = migration.review(prepared)
+        val displayed = review.changes.flatMap { it.newLines }.joinToString("\n")
+        assertFalse("customFontName" in displayed)
+        assertFalse("enableCustomFont" in displayed)
+        assertTrue("fontAAMode=1" in displayed)
+        assertTrue("someFeature=true" in displayed)
+        assertEquals(1, migration.apply(prepared, review, emptyMap()))
+        val result = fs.text(prepared.candidate / path)
+        assertTrue("customFontNamePrimary=JetBrainsMono NF Regular" in result)
+        assertTrue("customFontNameFallback=JetBrainsMono NF Regular" in result)
+        assertTrue("enableCustomFont=true" in result)
+        assertTrue("fontAAMode=1" in result)
+        assertTrue("someFeature=true" in result)
+    }
+
+    @Test
+    fun reportsProgressForEachEligibleConfigFile() = withInstances { root, prepared ->
+        val source = prepared.source / ".minecraft/config"
+        val target = prepared.candidate / ".minecraft/config"
+        fs.put(source / "changed.cfg", "value=old\n")
+        fs.put(target / "changed.cfg", "value=new\n")
+        fs.put(target / "unchanged.cfg", "value=same\n")
+        fs.put(source / "unchanged.cfg", "value=same\n")
+        fs.put(target / "generated/cache.cfg", "ignored")
+        val progress = mutableListOf<ConfigComparisonProgress>()
+
+        ConfigMigration(fs, root).review(prepared, onProgress = progress::add)
+
+        assertEquals(
+            listOf(
+                ConfigComparisonProgress(0, 2, "config/changed.cfg"),
+                ConfigComparisonProgress(1, 2, "config/unchanged.cfg"),
+                ConfigComparisonProgress(2, 2, null),
+            ),
+            progress,
+        )
+    }
+
+    @Test
+    fun resetsCorruptIgnoredFoldersAndAppliesNewConfigsWithoutReadingConfigHistory() = withInstances { root, prepared ->
+        val source = prepared.source / ".minecraft"
+        val target = prepared.candidate / ".minecraft"
+        val ignored = root / "ignored-player-folders.json"
+        fs.put(source / "screenshots/wayfarmap/old.png", "old map")
+        fs.put(ignored, "[")
+        fs.put(root / "config-choices.json", "{")
+        val migration = ConfigMigration(fs, root)
+
+        val review = migration.review(prepared, keepNewConfigs = true)
+        assertTrue(review.ignoredPlayerFolders.isEmpty())
+        assertEquals("[]", fs.text(ignored))
+        fs.put(ignored, "[false]")
+        migration.apply(
+            prepared, review, emptyMap(), migratePlayerData = true,
+            ignoredPlayerFolders = setOf("screenshots/wayfarmap"),
+        )
+        assertEquals("[\"screenshots/wayfarmap\"]", fs.text(ignored))
+        assertFalse(fs.exists(target / "screenshots/wayfarmap"))
+        assertEquals("{", fs.text(root / "config-choices.json"))
+    }
+
+    @Test
+    fun remembersSkippedFoldersAndReportsMigrationProgress() = withInstances { root, prepared ->
+        val source = prepared.source / ".minecraft"
+        val target = prepared.candidate / ".minecraft"
+        fs.put(source / "screenshots/wayfarmap/old.png", "old tile")
+        fs.put(source / "screenshots/photo.png", "photo")
+        fs.put(source / "journeymap/old.png", "old map")
+        fs.put(target / "screenshots/wayfarmap/new.png", "new tile")
+        val migration = ConfigMigration(fs, root)
+        val review = migration.review(prepared)
+        val ignored = setOf("screenshots/wayfarmap", "journeymap")
+        val progress = mutableListOf<MigrationProgress>()
+
+        assertTrue(review.playerFolders.containsAll(ignored))
+        assertEquals(
+            MigrationResult(0, 1),
+            migration.apply(prepared, review, emptyMap(), true, ignored, onProgress = progress::add),
+        )
+        assertEquals("photo", fs.text(target / "screenshots/photo.png"))
+        assertEquals("new tile", fs.text(target / "screenshots/wayfarmap/new.png"))
+        assertFalse(fs.exists(target / "screenshots/wayfarmap/old.png"))
+        assertFalse(fs.exists(target / "journeymap"))
+        assertEquals("old tile", fs.text(source / "screenshots/wayfarmap/old.png"))
+        assertEquals(MigrationProgress(2, 2, null, 2), progress.last())
+        fs.delete(target / MIGRATION_MARKER)
+        assertEquals(ignored, ConfigMigration(fs, root).review(prepared).ignoredPlayerFolders)
+    }
+
+    @Test
     fun transfersExtraModsAndKeepsStockAndTargetModsOutOfTheSelection() = withInstances { root, prepared ->
         val source = prepared.source / ".minecraft"
         val target = prepared.candidate / ".minecraft"

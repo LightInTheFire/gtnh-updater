@@ -61,6 +61,19 @@ class InstanceSwitchTest {
     }
 
     @Test
+    fun activatesAfterSelectingNewConfigsWithoutConfirmingATest() = fixture { home, prepared ->
+        val updates = UpdateSessionStore(fs, home)
+        val switching = InstanceSwitch(fs, home, updates)
+        val ready = UpdateSession(prepared, UpdateStage.NEW_CONFIGS_SELECTED)
+        updates.save(ready)
+
+        val activated = switching.activate(ready)
+        assertEquals(UpdateStage.ACTIVATED, activated.stage)
+        assertEquals("new", world(prepared.source))
+        assertEquals("old", world(activated.prepared.candidate))
+    }
+
+    @Test
     fun restoresTheActivePathIfInterruptedAfterTheFirstMove() = fixture { home, prepared ->
         val updates = UpdateSessionStore(fs, home)
         val journal = UpdateSessionStore(fs, home, "pending-switch.json")

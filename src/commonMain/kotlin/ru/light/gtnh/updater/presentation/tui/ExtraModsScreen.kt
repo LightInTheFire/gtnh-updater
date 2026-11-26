@@ -8,7 +8,7 @@ import ru.light.gtnh.updater.core.catalog.fuzzySearch
 import ru.light.gtnh.updater.core.model.TestedInstance
 
 internal const val KEY_EXTRA_MODS = "F2"
-private const val MOD_LIST_HEADER_ROWS = 4
+private const val MOD_LIST_HEADER_ROWS = 5
 private const val MOD_LIST_FOOTER_ROWS = 2
 private const val MAX_MOD_QUERY_LENGTH = 120
 
@@ -68,6 +68,7 @@ internal fun transferExtraMods(
                 val hint = if (available.hasBaseline) "Extra mods detected from the shipped inventory."
                     else "Pack inventory unavailable. Select only mods you added."
                 add(" $hint" to SECTION_STYLE)
+                add(" Extra mods can be incompatible. Test the migrated instance before activation." to SECTION_STYLE)
                 add(" Search > ${query.takeLast((size.width - " Search > _".length - TERMINAL_EDGE_MARGIN).coerceAtLeast(1))}_" to "")
                 add(" ${selected.size} selected | ${matches.size}/${available.paths.size} matches" to SECTION_STYLE)
                 if (matches.isEmpty()) add(" No matching mods." to "")

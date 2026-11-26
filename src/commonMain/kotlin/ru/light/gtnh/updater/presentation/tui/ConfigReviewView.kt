@@ -1,5 +1,6 @@
 package ru.light.gtnh.updater.presentation.tui
 
+import com.github.ajalt.mordant.terminal.Terminal
 import ru.light.gtnh.updater.core.config.ConfigChange
 import ru.light.gtnh.updater.core.config.ConfigChoice
 import ru.light.gtnh.updater.core.config.ConfigReview
@@ -32,6 +33,7 @@ internal data class ReviewScroll(val files: Int = 0, val changes: Int = 0, val p
 internal data class ReviewPane(val rows: List<TerminalRow>, val scroll: ReviewScroll)
 
 internal fun renderReviewPane(
+    terminal: Terminal,
     files: List<ReviewFile>,
     fileCursor: Int,
     changeCursor: Int,
@@ -77,7 +79,7 @@ internal fun renderReviewPane(
     if (selected != null) {
         val pathWidth = (rightWidth - 1).coerceAtLeast(1)
         val path = selected.path.terminalText().shortenPath(pathWidth * 2)
-        path.chunked(pathWidth).forEach { detailRows += " $it" to "" }
+        terminal.wrapReviewLine(path, pathWidth).forEach { detailRows += " $it" to "" }
     }
     val changeCount = minOf(MAX_CHANGE_ROWS, (rightHeight - detailRows.size - 2).coerceAtLeast(0), changes.size)
     val firstChange = visibleOffset(scroll.changes, changeCursor, changeCount, changes.size)
@@ -106,10 +108,14 @@ internal fun renderReviewPane(
             add(location to SECTION_STYLE)
             val wrapWidth = (rightWidth - " - ".length).coerceAtLeast(1)
             for (line in focus.oldLines.ifEmpty { listOf("(no lines)") }) {
-                for (part in line.previewParts(wrapWidth)) add(" - $part" to OLD_COLOR)
+                for (part in terminal.wrapReviewLine(line.replace("\t", "    ").terminalText(), wrapWidth)) {
+                    add(" - $part" to OLD_COLOR)
+                }
             }
             for (line in focus.newLines.ifEmpty { listOf("(no lines)") }) {
-                for (part in line.previewParts(wrapWidth)) add(" + $part" to NEW_COLOR)
+                for (part in terminal.wrapReviewLine(line.replace("\t", "    ").terminalText(), wrapWidth)) {
+                    add(" + $part" to NEW_COLOR)
+                }
             }
         }
         if (playerData.isNotEmpty()) {
@@ -156,5 +162,18 @@ private fun visibleOffset(offset: Int, cursor: Int, height: Int, items: Int): In
     }
 }
 
-private fun String.previewParts(width: Int): List<String> =
-    replace("\t", "    ").terminalText().chunked(width).ifEmpty { listOf("") }
+internal fun Terminal.wrapReviewLine(text: String, width: Int): List<String> = buildList {
+    var offset = 0
+    while (offset < text.length) {
+        val window = text.substring(offset, minOf(text.length, offset + width))
+        val (fitted) = fitTerminalCells(window, width)
+        if (fitted.isEmpty()) {
+            add("…")
+            offset += if (text[offset].isHighSurrogate() && text.getOrNull(offset + 1)?.isLowSurrogate() == true) 2 else 1
+        } else {
+            add(fitted)
+            offset += fitted.length
+        }
+    }
+    if (isEmpty()) add("")
+}

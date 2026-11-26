@@ -35,9 +35,10 @@ internal class InstanceSwitch(
         recover()
         val saved = updates.load()
         check(saved?.prepared == session.prepared && saved.stage == session.stage && session.stage in setOf(
-            UpdateStage.TEST_CONFIRMED, UpdateStage.MIGRATED_TEST_STARTED, UpdateStage.MIGRATED_TEST_CONFIRMED,
+            UpdateStage.TEST_CONFIRMED, UpdateStage.NEW_CONFIGS_SELECTED,
+            UpdateStage.MIGRATED_TEST_STARTED, UpdateStage.MIGRATED_TEST_CONFIRMED,
         )) {
-            "Confirm that the clean test reached the Minecraft main menu and was closed."
+            "Confirm the clean test or choose to keep the new configs."
         }
         check(isMigrated(session)) { "Complete the data and config migration first." }
         return switch(session, UpdateStage.ACTIVATING, BACKUP_PREFIX, TEST_INSTANCE_PREFIX)

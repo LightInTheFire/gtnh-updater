@@ -93,8 +93,12 @@ internal fun runClientMenu(updater: Updater) {
             var selectedArchive: ClientArchive? = null
             var previousSize = 0 to 0
             var redraw = true
-            var savedUpdate = runCatching { updater.resumeUpdate() }.getOrNull()
-            var lastSwitch = runCatching { updater.lastSwitch() }.getOrNull()
+            var savedUpdate = runCatching { updater.resumeUpdate() }
+            var lastSwitch = runCatching { updater.lastSwitch() }
+            fun refreshSavedUpdates() {
+                savedUpdate = runCatching { updater.resumeUpdate() }
+                lastSwitch = runCatching { updater.lastSwitch() }
+            }
 
             while (true) {
                 val completedRefresh = refresh
@@ -133,7 +137,14 @@ internal fun runClientMenu(updater: Updater) {
                 if (redraw || dimensions != previousSize) {
                     val channel = activeChannel
                     if (channel == null) {
-                        renderChannels(terminal, channels, channelCursor, savedUpdate != null, lastSwitch?.stage == UpdateStage.ACTIVATED)
+                        val recoveryErrors = listOfNotNull(
+                            savedUpdate.exceptionOrNull()?.let { "Resume failed: ${it.message ?: "Unknown error."}" },
+                            lastSwitch.exceptionOrNull()?.let { "Rollback unavailable: ${it.message ?: "Unknown error."}" },
+                        )
+                        renderChannels(
+                            terminal, channels, channelCursor, savedUpdate.getOrNull() != null,
+                            lastSwitch.getOrNull()?.stage == UpdateStage.ACTIVATED, recoveryErrors,
+                        )
                     } else {
                         renderBrowser(
                             terminal, channel, query, matches, cursor, offset, rowCount,
@@ -154,15 +165,13 @@ internal fun runClientMenu(updater: Updater) {
                         KEY_UP -> channelCursor = (channelCursor - 1).coerceAtLeast(0)
                         KEY_DOWN -> channelCursor = (channelCursor + 1).coerceAtMost(channels.lastIndex)
                         KEY_COPIES -> if (manageCopies(terminal, input, updater)) return
-                        KEY_RESUME -> savedUpdate?.let { session ->
+                        KEY_RESUME -> savedUpdate.getOrNull()?.let { session ->
                             if (resumePreparationScreen(terminal, input, updater, session)) return
-                            savedUpdate = runCatching { updater.resumeUpdate() }.getOrNull()
-                            lastSwitch = runCatching { updater.lastSwitch() }.getOrNull()
+                            refreshSavedUpdates()
                         }
-                        KEY_ROLLBACK -> lastSwitch?.takeIf { it.stage == UpdateStage.ACTIVATED }?.let { session ->
+                        KEY_ROLLBACK -> lastSwitch.getOrNull()?.takeIf { it.stage == UpdateStage.ACTIVATED }?.let { session ->
                             if (resumePreparationScreen(terminal, input, updater, session, askRollback = true)) return
-                            savedUpdate = runCatching { updater.resumeUpdate() }.getOrNull()
-                            lastSwitch = runCatching { updater.lastSwitch() }.getOrNull()
+                            refreshSavedUpdates()
                         }
                         KEY_SETTINGS -> when (val result = runSettingsScreen(terminal, input, updater::saveSettings, settings)) {
                             is SettingsSelection.Saved -> applySavedSettings(result.settings)
@@ -207,8 +216,7 @@ internal fun runClientMenu(updater: Updater) {
                                     }
                                     UpdateFlowExit.BACK -> Unit
                                 }
-                                savedUpdate = runCatching { updater.resumeUpdate() }.getOrNull()
-                                lastSwitch = runCatching { updater.lastSwitch() }.getOrNull()
+                                refreshSavedUpdates()
                             }
                         }
                     }

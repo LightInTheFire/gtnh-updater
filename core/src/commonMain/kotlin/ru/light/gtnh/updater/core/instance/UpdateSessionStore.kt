@@ -1,6 +1,7 @@
 package ru.light.gtnh.updater.core.instance
 
 import kotlin.uuid.Uuid
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -25,7 +26,13 @@ internal class UpdateSessionStore(
     fun load(validateInstances: Boolean = true): UpdateSession? {
         val file = home?.div(filename) ?: return null
         if (!fs.exists(file)) return null
-        val data = fs.read(file) { Json.parseToJsonElement(readUtf8()) } as JsonObject
+        val contents = fs.read(file) { readUtf8() }
+        val data = try {
+            Json.parseToJsonElement(contents) as? JsonObject
+        } catch (error: SerializationException) {
+            throw IllegalArgumentException("Invalid saved update record ($filename).", error)
+        }
+        requireNotNull(data) { "Invalid saved update record ($filename)." }
         fun text(key: String): String? = (data[key] as? JsonPrimitive)?.content
         val source = checkNotNull(text("source")).toPath()
         val candidate = checkNotNull(text("candidate")).toPath()

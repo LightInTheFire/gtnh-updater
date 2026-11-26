@@ -1,6 +1,7 @@
 package ru.light.gtnh.updater.core.instance
 
 import okio.FileSystem
+import okio.Path
 import ru.light.gtnh.updater.core.config.removeDefaultServersMod
 import ru.light.gtnh.updater.core.model.PreparedInstance
 import ru.light.gtnh.updater.core.model.PrismProfile
@@ -20,13 +21,15 @@ internal class PrismTestLauncher(
         prepared: PreparedInstance,
         profile: PrismProfile,
         onRegistered: (PreparedInstance) -> Unit = {},
+    ): PreparedInstance = registerIn(prepared, profile.instances, onRegistered)
+
+    fun registerIn(
+        prepared: PreparedInstance,
+        instances: Path,
+        onRegistered: (PreparedInstance) -> Unit,
     ): PreparedInstance {
         val staging = requireNotNull(prepared.candidate.parent)
-        val id = staging.name.removePrefix(STAGING_PREFIX)
-        check(staging.name.startsWith(STAGING_PREFIX) && staging.parent == profile.instances) {
-            "The prepared instance is outside this Prism profile."
-        }
-        val destination = profile.instances / "$TEST_INSTANCE_PREFIX$id"
+        val destination = registrationDestination(prepared, instances)
         check(!fs.exists(destination)) { "The Prism test instance already exists." }
         check(!fs.exists(prepared.candidate / PREPARATION_MANIFEST)) {
             "The prepared instance already contains an update plan."
@@ -55,6 +58,26 @@ internal class PrismTestLauncher(
         return test
     }
 
+    fun registrationDestination(prepared: PreparedInstance, instances: Path): Path {
+        val staging = requireNotNull(prepared.candidate.parent)
+        check(prepared.source.parent == instances && prepared.candidate.name == "instance" &&
+            staging.name.startsWith(STAGING_PREFIX) && staging.parent == instances &&
+            fs.metadataOrNull(staging)?.symlinkTarget == null
+        ) { "The prepared instance is outside this instances directory." }
+        val id = staging.name.removePrefix(STAGING_PREFIX)
+        return instances / "$TEST_INSTANCE_PREFIX$id"
+    }
+
+    fun restoreRegistration(prepared: PreparedInstance, destination: Path) {
+        check(destination == registrationDestination(prepared, checkNotNull(prepared.source.parent)) &&
+            !fs.exists(prepared.candidate) && fs.metadataOrNull(destination)?.symlinkTarget == null &&
+            instanceGameDirectory(fs, destination) != null
+        ) { "Could not recover the candidate registration. The instance folders were kept." }
+        names.restore(destination)
+        fs.delete(destination / PREPARATION_MANIFEST)
+        fs.atomicMove(destination, prepared.candidate)
+    }
+
     fun labelCandidate(test: PreparedInstance) {
         check(test.candidate.name.startsWith(TEST_INSTANCE_PREFIX)) { "Select a registered Prism test instance." }
         names.label(test.candidate, "Test", test.targetVersion)
@@ -65,13 +88,15 @@ internal class PrismTestLauncher(
             "Select a registered Prism test instance."
         }
         labelCandidate(test)
-        if (removeDefaultServerList) {
-            val game = checkNotNull(instanceGameDirectory(fs, test.candidate)) { "The test instance is unavailable." }
-            removeDefaultServersMod(fs, game)
-        }
+        if (removeDefaultServerList) removeDefaultServerList(test)
         start(
             profile,
             listOf(PRISM_ROOT_OPTION, profile.root.toString(), PRISM_LAUNCH_OPTION, test.candidate.name),
         )
+    }
+
+    fun removeDefaultServerList(test: PreparedInstance) {
+        val game = checkNotNull(instanceGameDirectory(fs, test.candidate)) { "The candidate instance is unavailable." }
+        removeDefaultServersMod(fs, game)
     }
 }

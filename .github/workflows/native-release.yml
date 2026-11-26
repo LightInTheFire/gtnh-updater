@@ -17,22 +17,27 @@ jobs:
       matrix:
         include:
           - target: linuxX64
+            platform: linux-x64
             runner: ubuntu-24.04
             task: packageReleaseLinuxX64
             executable: gtnh-updater
           - target: linuxArm64
+            platform: linux-arm64
             runner: ubuntu-24.04
             task: packageReleaseLinuxArm64
             executable: gtnh-updater
           - target: macosX64
+            platform: macos-x64
             runner: macos-15-intel
             task: packageReleaseMacosX64
             executable: gtnh-updater
           - target: macosArm64
+            platform: macos-arm64
             runner: macos-15
             task: packageReleaseMacosArm64
             executable: gtnh-updater
           - target: mingwX64
+            platform: windows-x64
             runner: windows-2025
             task: packageReleaseMingwX64
             executable: gtnh-updater.exe
@@ -62,12 +67,56 @@ jobs:
         run: |
           "./build/release/${{ matrix.target }}/${{ matrix.executable }}" --help
 
-      - name: Archive executable with its permissions
+      - name: Name release archive
         shell: bash
-        run: tar -czf "gtnh-updater-${{ matrix.target }}.tar.gz" -C "build/release/${{ matrix.target }}" "${{ matrix.executable }}"
+        run: |
+          version="snapshot-${GITHUB_SHA:0:7}"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "ARCHIVE_NAME=gtnh-updater-$version-${{ matrix.platform }}" >> "$GITHUB_ENV"
+          mkdir -p dist
+
+      - name: Archive Unix executable with its permissions
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          tar -czf "dist/$ARCHIVE_NAME.tar.gz" -C "build/release/${{ matrix.target }}" "${{ matrix.executable }}"
+
+      - name: Archive Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -LiteralPath "build/release/${{ matrix.target }}/${{ matrix.executable }}" -DestinationPath "dist/$env:ARCHIVE_NAME.zip"
 
       - uses: actions/upload-artifact@v7
         with:
           name: gtnh-updater-${{ matrix.target }}
-          path: gtnh-updater-${{ matrix.target }}.tar.gz
+          path: dist/
+          if-no-files-found: error
+
+  release-bundle:
+    name: Collect release archives and checksums
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: gtnh-updater-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        working-directory: dist
+        run: |
+          shopt -s nullglob
+          archives=(gtnh-updater-*.tar.gz gtnh-updater-*.zip)
+          test "${#archives[@]}" -eq 5
+          sha256sum "${archives[@]}" > SHA256SUMS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-bundle
+          path: dist/
           if-no-files-found: error

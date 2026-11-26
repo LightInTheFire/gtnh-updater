@@ -7,6 +7,7 @@ import ru.light.gtnh.updater.core.config.ConfigMigration
 import ru.light.gtnh.updater.core.config.ConfigReview
 import ru.light.gtnh.updater.core.config.ExtraMods
 import ru.light.gtnh.updater.core.config.MigrationResult
+import ru.light.gtnh.updater.core.diagnostics.DiagnosticLog
 import ru.light.gtnh.updater.core.download.ArchiveDownloader
 import ru.light.gtnh.updater.core.instance.InstanceFinder
 import ru.light.gtnh.updater.core.instance.InstanceCopies
@@ -32,7 +33,8 @@ import ru.light.gtnh.updater.core.model.UpdateStage
 import ru.light.gtnh.updater.core.settings.SettingsStore
 
 /** Operations shared by interactive and command-line frontends. */
-class Updater {
+class Updater(appVersion: String? = null) {
+    private val diagnostics = DiagnosticLog(appVersion)
     private val settings = SettingsStore()
     private val catalogs = CatalogStore()
     private val downloader = ArchiveDownloader()
@@ -48,14 +50,14 @@ class Updater {
 
     fun loadSettings(): AppSettings? = settings.load()
 
-    fun saveSettings(values: AppSettings) = settings.save(values)
+    fun saveSettings(values: AppSettings) = diagnostics.track("settings.save") { settings.save(values) }
 
     fun migrateLegacyCatalogs() = catalogs.migrateLegacy()
 
     fun loadCatalog(channel: PackChannel): ChannelCatalog = catalogs.load(channel)
 
     suspend fun refreshCatalog(channel: PackChannel, githubToken: String? = null): ChannelCatalog =
-        catalogs.refresh(channel, githubToken)
+        diagnostics.track("catalog.refresh.${channel.name}") { catalogs.refresh(channel, githubToken) }
 
     fun resolveVersion(id: String): PackVersion? =
         PackChannel.entries.firstNotNullOfOrNull { channel ->
@@ -63,14 +65,16 @@ class Updater {
         } ?: PackVersion.parse(id)
 
     suspend fun downloadArchive(archive: ClientArchive, onProgress: (TransferProgress) -> Unit = {}): DownloadedArchive =
-        downloader.download(archive, onProgress)
+        diagnostics.track("archive.download") { downloader.download(archive, onProgress) }
 
     suspend fun prepareInstance(
         installed: Path,
         archive: Path,
         targetVersion: String? = null,
         onProgress: (PreparationProgress) -> Unit = {},
-    ): PreparedInstance = preparer.prepare(installed, archive, targetVersion, onProgress)
+    ): PreparedInstance = diagnostics.track("instance.prepare") {
+        preparer.prepare(installed, archive, targetVersion, onProgress)
+    }
 
     fun prismProfileFor(instance: Path): PrismProfile? = finder.prismProfileFor(instance)
 
@@ -81,8 +85,9 @@ class Updater {
         instancesDirectory: Path,
         targetVersion: String,
         onProgress: (PreparationProgress) -> Unit = {},
-    ): InstalledInstance =
+    ): InstalledInstance = diagnostics.track("instance.install") {
         preparer.install(archive, instancesDirectory, targetVersion, settings.load()?.removeDefaultServerList == true, onProgress)
+    }
 
     fun resumeUpdate(): UpdateSession? {
         switching.recover()
@@ -121,9 +126,11 @@ class Updater {
         return roots to protected
     }
 
-    fun activateUpdate(session: UpdateSession): UpdateSession = switching.activate(session)
+    fun activateUpdate(session: UpdateSession): UpdateSession =
+        diagnostics.track("instance.activate") { switching.activate(session) }
 
-    fun rollbackUpdate(session: UpdateSession): UpdateSession = switching.rollback(session)
+    fun rollbackUpdate(session: UpdateSession): UpdateSession =
+        diagnostics.track("instance.rollback") { switching.rollback(session) }
 
     fun hasMigrated(session: UpdateSession): Boolean = switching.isMigrated(session)
 
@@ -152,7 +159,9 @@ class Updater {
         tested: TestedInstance,
         review: ConfigReview,
         choices: Map<String, ConfigChoice>,
-    ): MigrationResult = config.apply(tested.prepared, review, choices, migratePlayerData = true)
+    ): MigrationResult = diagnostics.track("instance.migrate") {
+        config.apply(tested.prepared, review, choices, migratePlayerData = true)
+    }
 
     fun registerPrismTest(session: UpdateSession, prism: PrismProfile): UpdateSession {
         if (session.stage != UpdateStage.PREPARED) return session
@@ -168,7 +177,9 @@ class Updater {
             UpdateStage.MIGRATED_TEST_STARTED, UpdateStage.MIGRATED_TEST_CONFIRMED,
         )) { "This candidate is unavailable for a test launch." }
         val stage = if (hasMigrated(session)) UpdateStage.MIGRATED_TEST_STARTED else UpdateStage.TEST_STARTED
-        launcher.launch(session.prepared, prism, settings.load()?.removeDefaultServerList == true)
+        diagnostics.track("prism.test-launch") {
+            launcher.launch(session.prepared, prism, settings.load()?.removeDefaultServerList == true)
+        }
         return saveUpdate(session.prepared, stage)
     }
 

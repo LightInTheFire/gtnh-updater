@@ -42,8 +42,13 @@ class InstanceSwitchTest {
         assertFalse(fs.exists(prepared.candidate))
         putWorld(prepared.source, "progress after updating")
 
+        // A launcher that was left open can save its cached name after activation.
+        val backupConfig = activated.prepared.candidate / "instance.cfg"
+        fs.write(backupConfig) { writeUtf8("name=Old pack\r\ncustom=value\r\n") }
         val restarted = InstanceSwitch(fs, home, updates)
-        val rollback = restarted.rollback(checkNotNull(restarted.lastSwitch()))
+        val saved = checkNotNull(restarted.lastSwitch())
+        assertEquals("[Backup 2.9.1] Old pack", PrismInstanceName(fs).get(saved.prepared.candidate))
+        val rollback = restarted.rollback(saved)
         assertEquals(UpdateStage.ROLLED_BACK, rollback.stage)
         assertEquals("old", world(prepared.source))
         assertEquals("progress after updating", world(rollback.prepared.candidate))

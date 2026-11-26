@@ -40,6 +40,20 @@ Packaged executables are in `build/release/<target>/gtnh-updater` (with
 `.exe` on Windows). For example, run `./build/release/linuxX64/gtnh-updater`
 on Linux x86-64. Running a packaged executable requires no JVM.
 
+## Release archives
+
+After all five builds pass, the **Native release binaries** workflow uploads
+a `release-bundle` artifact with the platform archives and `SHA256SUMS`.
+Version tags such as `v0.2.0` produce names such as
+`gtnh-updater-0.2.0-linux-x64.tar.gz` and
+`gtnh-updater-0.2.0-windows-x64.zip`. Branch and pull request builds use
+`snapshot-<short-commit>` in place of the version.
+
+The Linux and macOS archives contain an executable named `gtnh-updater`
+with its execute permission preserved. The Windows ZIP contains
+`gtnh-updater.exe`. Upload the five archives and `SHA256SUMS` from the
+tag's bundle as individual GitHub Release assets.
+
 ## Settings
 
 The first interactive launch opens setup and fetches the release catalogs

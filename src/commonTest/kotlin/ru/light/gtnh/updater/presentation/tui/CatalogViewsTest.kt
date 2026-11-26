@@ -11,6 +11,19 @@ import ru.light.gtnh.updater.core.model.PackVersion
 
 class CatalogViewsTest {
     @Test
+    fun displaysRecoveryErrorsOnTheChannelScreen() {
+        val recorder = TerminalRecorder(width = 80, height = 14)
+        val terminal = Terminal(terminalInterface = recorder)
+        renderChannels(
+            terminal, PackChannel.entries, cursor = 0, canResume = false, canRollback = false,
+            recoveryErrors = listOf("Resume failed: Invalid saved instance paths.", "Rollback unavailable: Invalid switch record."),
+        )
+        assertContains(recorder.output(), "Resume failed: Invalid saved instance paths.")
+        assertContains(recorder.output(), "Rollback unavailable: Invalid switch record.")
+        assertContains(recorder.output(), "Stable")
+    }
+
+    @Test
     fun keepsTheSelectedArchiveVisibleInAShortTerminal() {
         val recorder = TerminalRecorder(width = 100, height = 5)
         val terminal = Terminal(terminalInterface = recorder)

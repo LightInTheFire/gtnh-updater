@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "ru.light"
-version = "0.2.1"
+version = "0.2.2"
 
 val appVersion = version.toString()
 val appVersionSources = layout.buildDirectory.dir("generated/appVersion")

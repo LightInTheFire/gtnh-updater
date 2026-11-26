@@ -12,6 +12,7 @@ import ru.light.gtnh.updater.core.model.UpdateStage
 
 private const val KEY_CONFIRM_TEST = "F4"
 private const val KEY_ACTIVATE = "F7"
+private const val KEY_KEEP_NEW_CONFIGS = "F9"
 internal const val KEY_ROLLBACK = "F8"
 private const val KEY_CONFIRM_SWITCH = "y"
 private const val TEST_INSTRUCTION_STYLE = "1;33"
@@ -84,16 +85,17 @@ private fun runPreparationProgress(
     var previousSize = 0 to 0
     var previousFooter = ""
 
-    fun continueCleanUpdate(confirmed: UpdateSession): PreparationScreenExit? {
-        val tested = confirmed.tested ?: return null
+    fun continueMigration(confirmed: UpdateSession): PreparationScreenExit? {
+        val tested = confirmed.tested
+        if (tested == null && confirmed.stage != UpdateStage.NEW_CONFIGS_SELECTED) return null
         if (updater.hasMigrated(confirmed)) return null
         inspected = null
         previousFrame = emptyList()
-        if (updater.extraModsPending(tested)) {
+        if (tested != null && updater.extraModsPending(tested)) {
             if (transferExtraMods(terminal, input, updater, tested)) return PreparationScreenExit.QUIT
             if (updater.extraModsPending(tested)) return null
         }
-        return when (reviewConfigs(terminal, input, updater, tested)) {
+        return when (reviewConfigs(terminal, input, updater, confirmed)) {
             UpdateFlowExit.BACK -> null
             UpdateFlowExit.MENU -> PreparationScreenExit.MENU
             UpdateFlowExit.QUIT -> PreparationScreenExit.QUIT
@@ -101,7 +103,7 @@ private fun runPreparationProgress(
     }
 
     try {
-        if (restored != null) continueCleanUpdate(restored)?.let { return it }
+        if (restored != null) continueMigration(restored)?.let { return it }
         while (true) {
             val outcome = restored?.let { Result.success(it) } ?: preparation?.outcome()
             if (session == null) session = outcome?.getOrNull()
@@ -110,12 +112,14 @@ private fun runPreparationProgress(
             if (active !== inspected) {
                 inspected = active
                 migrated = active?.takeIf {
-                    stage == UpdateStage.TEST_CONFIRMED || stage == UpdateStage.MIGRATED_TEST_STARTED ||
+                    stage == UpdateStage.TEST_CONFIRMED || stage == UpdateStage.NEW_CONFIGS_SELECTED ||
+                        stage == UpdateStage.MIGRATED_TEST_STARTED ||
                         stage == UpdateStage.MIGRATED_TEST_CONFIRMED
                 }?.let(updater::hasMigrated) == true
                 modsPending = !migrated && active?.tested?.let(updater::extraModsPending) == true
             }
             val testing = !migrated && (stage == UpdateStage.TEST_STARTED || stage == UpdateStage.MIGRATED_TEST_STARTED)
+            val canKeepNewConfigs = stage == UpdateStage.PREPARED || stage == UpdateStage.REGISTERED
             if (exitRequested && outcome != null) return PreparationScreenExit.QUIT
 
             val size = terminal.updateSize()
@@ -150,13 +154,19 @@ private fun runPreparationProgress(
                                     stage == UpdateStage.ACTIVATED -> " Reopen Prism and select the updated entry. The old copy is marked [Backup ...]."
                                     stage == UpdateStage.ROLLED_BACK -> " The newer copy, including its worlds, is preserved below."
                                     testing -> " Reach the Minecraft main menu, quit the game, then press F4."
-                                    migrated -> " Migration complete. Activate the update at the original path."
+                                    migrated && stage == UpdateStage.MIGRATED_TEST_STARTED ->
+                                        " Check the menu, then quit Minecraft before activating."
+                                    migrated -> " Migration complete. You can test the result before activation."
                                     modsPending -> " Test confirmed. Copy extra mods or skip this step before choosing configs."
-                                    prism == null -> " Config review requires a Prism test launch."
+                                    stage == UpdateStage.NEW_CONFIGS_SELECTED -> " New configs selected. Migrate player data without a test launch."
+                                    prism == null -> " Keep new configs to migrate without a Prism test launch."
                                     stage == UpdateStage.TEST_CONFIRMED -> " Test confirmed. Migration copies player data and applies config choices."
                                     else -> " Test launch the candidate before reviewing configs."
                                 }
                                 add(instructions to if (testing || confirmSwitch) TEST_INSTRUCTION_STYLE else "")
+                                if (canKeepNewConfigs) {
+                                    add(" F9 keeps the new configs and skips the Minecraft test launch." to SECTION_STYLE)
+                                }
                                 if (confirmSwitch) {
                                     add(" An open launcher can overwrite instance names with old values." to TEST_INSTRUCTION_STYLE)
                                 }
@@ -190,11 +200,14 @@ private fun runPreparationProgress(
                 confirmSwitch -> "Y: Confirm switch | Esc: Cancel"
                 stage == UpdateStage.ACTIVATED -> "F8: Roll back | Esc: Back"
                 stage == UpdateStage.ROLLED_BACK -> "Esc: Back"
+                migrated && prism != null -> "F2: Test migrated instance | F7/Enter: Activate | Esc: Back"
                 migrated -> "F7/Enter: Activate update | Esc: Back"
                 testing -> "F4: Confirm game closed | Enter: Retry test | Esc: Back"
                 modsPending -> "Enter: Transfer extra mods | Esc: Back"
                 stage == UpdateStage.TEST_CONFIRMED -> "Enter: Migrate data and configs | Esc: Back"
-                outcome?.isSuccess == true && prism != null -> "Enter: Test launch | Esc: Back"
+                stage == UpdateStage.NEW_CONFIGS_SELECTED -> "Enter: Migrate player data | Esc: Back"
+                canKeepNewConfigs && prism != null -> "Enter: Test launch | F9: Keep new configs | Esc: Back"
+                canKeepNewConfigs -> "F9: Keep new configs | Esc: Back"
                 outcome != null -> "Left/Esc: Back"
                 else -> ""
             }
@@ -247,7 +260,30 @@ private fun runPreparationProgress(
                         PreparationScreenExit.BACK
                     }
                     KEY_ACTIVATE -> if (migrated) confirmSwitch = true
+                    KEY_EXTRA_MODS -> if (active != null) {
+                        if (migrated && prism != null) {
+                            launchStatus = try {
+                                session = updater.launchPrismTest(active, prism)
+                                "Launch requested in Prism Launcher."
+                            } catch (error: Exception) {
+                                "Test launch failed. ${error.message.orEmpty()}"
+                            }
+                        } else {
+                            continueMigration(active)?.let { return it }
+                        }
+                    }
                     KEY_ROLLBACK -> if (stage == UpdateStage.ACTIVATED) confirmSwitch = true
+                    KEY_KEEP_NEW_CONFIGS -> if (active != null && canKeepNewConfigs) {
+                        try {
+                            session = updater.selectNewConfigs(active)
+                            launchStatus = null
+                        } catch (error: Exception) {
+                            launchStatus = "Could not select new configs. ${error.message.orEmpty()}"
+                        }
+                        if (session.stage == UpdateStage.NEW_CONFIGS_SELECTED) {
+                            continueMigration(session)?.let { return it }
+                        }
+                    }
                     KEY_CONFIRM_TEST -> if (active != null && testing) {
                         val confirmed = try {
                             updater.confirmTestClosed(active)
@@ -258,16 +294,16 @@ private fun runPreparationProgress(
                         if (confirmed != null) {
                             session = confirmed
                             launchStatus = null
-                            continueCleanUpdate(confirmed)?.let { return it }
+                            continueMigration(confirmed)?.let { return it }
                         }
                     }
-                    KEY_CONFIG_REVIEW, KEY_EXTRA_MODS -> active?.let { continueCleanUpdate(it) }?.let { return it }
+                    KEY_CONFIG_REVIEW -> active?.let { continueMigration(it) }?.let { return it }
                     KEY_ENTER, KEY_RIGHT -> {
                         if (outcome.isFailure) return PreparationScreenExit.CHOOSE_AGAIN
                         if (migrated) {
                             confirmSwitch = true
-                        } else if (active != null && stage == UpdateStage.TEST_CONFIRMED) {
-                            continueCleanUpdate(active)?.let { return it }
+                        } else if (active != null && (stage == UpdateStage.TEST_CONFIRMED || stage == UpdateStage.NEW_CONFIGS_SELECTED)) {
+                            continueMigration(active)?.let { return it }
                         } else if (prism != null && active != null && stage in setOf(
                                 UpdateStage.PREPARED, UpdateStage.REGISTERED, UpdateStage.TEST_STARTED,
                                 UpdateStage.MIGRATED_TEST_STARTED,

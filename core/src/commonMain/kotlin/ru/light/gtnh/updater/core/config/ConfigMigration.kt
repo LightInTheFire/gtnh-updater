@@ -5,7 +5,9 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import okio.FileSystem
@@ -17,6 +19,7 @@ import ru.light.gtnh.updater.core.platform.appHomeDirectory
 private val configDirectories = listOf("config", "configs")
 private const val MAX_CONFIG_BYTES = 512L * 1024
 private const val HISTORY_FILENAME = "config-choices.json"
+private const val IGNORED_PLAYER_FOLDERS_FILENAME = "ignored-player-folders.json"
 
 internal class ConfigMigration(
     private val fs: FileSystem = FileSystem.SYSTEM,
@@ -70,13 +73,25 @@ internal class ConfigMigration(
         selected.size
     }
 
-    suspend fun review(prepared: PreparedInstance): ConfigReview = lock.withLock {
+    suspend fun review(
+        prepared: PreparedInstance,
+        keepNewConfigs: Boolean = false,
+        onProgress: (ConfigComparisonProgress) -> Unit = {},
+    ): ConfigReview = lock.withLock {
         val source = gameDirectory(prepared.source)
         val candidate = gameDirectory(prepared.candidate)
         require(source != candidate) { "Choose two different instances." }
         MigrationTransaction(fs, candidate).recover()
         if (fs.exists(candidate / MIGRATION_MARKER)) {
             return@withLock ConfigReview(candidate, emptyList(), emptyList(), migrationComplete = true)
+        }
+        val playerData = availablePlayerData(fs, source)
+        if (keepNewConfigs) {
+            return@withLock ConfigReview(
+                candidate, emptyList(), emptyList(), playerData,
+                playerFolders = playerFolders(fs, source, playerData),
+                ignoredPlayerFolders = loadIgnoredPlayerFolders(),
+            )
         }
         val history = loadHistory()
         val skipped = linkedSetOf<String>()
@@ -95,14 +110,19 @@ internal class ConfigMigration(
                 .toList()
         }.toSet()
         skipped += conflicts
-        for (path in allPaths) {
+        for ((index, path) in allPaths.withIndex()) {
             currentCoroutineContext().ensureActive()
+            onProgress(ConfigComparisonProgress(index, allPaths.size, path))
             if (skipped.any { path == it || path.startsWith("$it/") }) continue
             val readable = try {
                 val before = if (path in previous) readText(source / path) else null
                 val after = if (path in incoming) readText(candidate / path) else null
-                val difference = if (before == after) null else diffConfig(path, before, after, history)
-                difference?.takeIf { it.edits.isNotEmpty() }?.let(files::add)
+                val proposed = if (path == ANGELICA_CONFIG && before != null && after != null) {
+                    carryAngelicaFontSettings(before, after)
+                } else after
+                val difference = if (before == after) null else diffConfig(path, before, proposed, history)
+                difference?.takeIf { it.edits.isNotEmpty() || proposed != after }
+                    ?.copy(expectedTarget = after)?.let(files::add)
                 before == after || difference != null
             } catch (_: IllegalStateException) {
                 false
@@ -115,7 +135,12 @@ internal class ConfigMigration(
             }
             if (!readable) skipped += path
         }
-        ConfigReview(candidate, files, skipped.sorted(), availablePlayerData(fs, source))
+        onProgress(ConfigComparisonProgress(allPaths.size, allPaths.size, null))
+        ConfigReview(
+            candidate, files, skipped.sorted(), playerData,
+            playerFolders = playerFolders(fs, source, playerData),
+            ignoredPlayerFolders = loadIgnoredPlayerFolders(),
+        )
     }
 
     suspend fun apply(prepared: PreparedInstance, review: ConfigReview, choices: Map<String, ConfigChoice>): Int =
@@ -126,6 +151,9 @@ internal class ConfigMigration(
         review: ConfigReview,
         choices: Map<String, ConfigChoice>,
         migratePlayerData: Boolean,
+        ignoredPlayerFolders: Set<String>? = null,
+        includeMinecraftSettings: Boolean = true,
+        onProgress: (MigrationProgress) -> Unit = {},
     ): MigrationResult =
         lock.withLock {
             val candidate = gameDirectory(prepared.candidate)
@@ -136,14 +164,14 @@ internal class ConfigMigration(
             transaction.recover()
             val marker = candidate / MIGRATION_MARKER
             if (migratePlayerData) check(!fs.exists(marker)) { "Migration is already complete for this instance." }
-            val history = loadHistory().toMutableMap()
+            val history = if (choices.isEmpty()) mutableMapOf() else loadHistory().toMutableMap()
             val writes = mutableListOf<ConfigWrite>()
             for (file in review.files) {
                 currentCoroutineContext().ensureActive()
                 val path = candidate / file.path
                 checkSafePath(candidate, path)
                 val existing = if (fs.exists(path)) readText(path) else null
-                check(existing == file.after) { "Config changed since review: ${file.path}. Reopen the review." }
+                check(existing == file.expectedTarget) { "Config changed since review: ${file.path}. Reopen the review." }
                 val merged = file.merge(choices)
                 if (merged != existing) writes += ConfigWrite(path, existing, merged)
                 for (edit in file.edits) {
@@ -156,11 +184,34 @@ internal class ConfigMigration(
                 val json = JsonObject(history.mapValues { JsonPrimitive(it.value.name) }).toString()
                 ConfigWrite(path, if (fs.exists(path)) fs.read(path) { readUtf8() } else null, json)
             } else null
-            val playerTransfer = if (migratePlayerData) PlayerDataTransfer(fs, source, candidate, review.playerData) else null
+            val ignored = ignoredPlayerFolders ?: review.ignoredPlayerFolders.intersect(review.playerFolders.toSet())
+            check(review.playerFolders.containsAll(ignored)) { "Only folders from this review can be skipped." }
+            if (migratePlayerData && ignoredPlayerFolders != null) {
+                val previous = loadIgnoredPlayerFolders()
+                val updated = (previous - review.playerFolders.toSet()) + ignored
+                if (updated != previous) {
+                    val path = checkNotNull(home) { "The updater home directory is unavailable." } / IGNORED_PLAYER_FOLDERS_FILENAME
+                    writeText(path, JsonArray(updated.sorted().map(::JsonPrimitive)).toString())
+                }
+            }
+            val playerTransfer = if (migratePlayerData) {
+                PlayerDataTransfer(
+                    fs, source, candidate, review.playerData,
+                    ignoredFolders = ignored,
+                    includeMinecraftSettings = includeMinecraftSettings,
+                )
+            } else null
             var historyWritten = false
+            var copiedFiles = 0L
             transaction.begin()
             try {
-                playerTransfer?.prepare(transaction)
+                playerTransfer?.prepare(transaction) { progress ->
+                    copiedFiles = progress.copiedFiles
+                    onProgress(progress.copy(totalEntries = progress.totalEntries + 1))
+                }
+                if (playerTransfer != null) {
+                    onProgress(MigrationProgress(playerTransfer.entryCount, playerTransfer.entryCount + 1, null, copiedFiles))
+                }
                 for (write in writes) {
                     currentCoroutineContext().ensureActive()
                     val relative = write.path.relativeTo(candidate).segments.joinToString("/")
@@ -181,7 +232,11 @@ internal class ConfigMigration(
                 }
                 throw error
             }
-            MigrationResult(changedConfigs, if (migratePlayerData) review.playerData.size else 0)
+            val playerEntries = playerTransfer?.entryCount ?: 0
+            if (playerTransfer != null) {
+                onProgress(MigrationProgress(playerEntries + 1, playerEntries + 1, null, copiedFiles))
+            }
+            MigrationResult(changedConfigs, playerEntries)
         }
 
     private fun gameDirectory(path: Path): Path =
@@ -189,19 +244,20 @@ internal class ConfigMigration(
             .let { check(fs.metadata(it).symlinkTarget == null) { "Linked game directories are unsupported." }
                 it }
 
-    private fun collect(root: Path, skipped: MutableSet<String>): Set<String> {
+    private suspend fun collect(root: Path, skipped: MutableSet<String>): Set<String> {
         val paths = linkedSetOf<String>()
-        fun visit(path: Path) {
+        suspend fun visit(path: Path) {
+            currentCoroutineContext().ensureActive()
             val metadata = fs.metadataOrNull(path) ?: return
             val relative = path.relativeTo(root).segments.joinToString("/")
             when {
                 metadata.symlinkTarget != null -> skipped += relative
-                metadata.isDirectory -> fs.list(path).forEach(::visit)
+                metadata.isDirectory -> for (child in fs.list(path)) visit(child)
                 metadata.isRegularFile -> paths += relative
                 else -> skipped += relative
             }
         }
-        configDirectories.forEach { visit(root / it) }
+        for (directory in configDirectories) visit(root / directory)
         return paths
     }
 
@@ -232,6 +288,22 @@ internal class ConfigMigration(
         return json.mapNotNull { (id, value) ->
             ConfigChoice.entries.firstOrNull { it.name == (value as? JsonPrimitive)?.content }?.let { id to it }
         }.toMap()
+    }
+
+    private fun loadIgnoredPlayerFolders(): Set<String> {
+        val path = home?.div(IGNORED_PLAYER_FOLDERS_FILENAME) ?: return emptySet()
+        if (!fs.exists(path)) return emptySet()
+        val text = fs.read(path) { readUtf8() }
+        val entries = try {
+            Json.parseToJsonElement(text) as? JsonArray
+        } catch (_: SerializationException) {
+            null
+        }
+        if (entries != null && entries.all { it is JsonPrimitive && it.isString }) {
+            return entries.map { (it as JsonPrimitive).content }.toSet()
+        }
+        writeText(path, JsonArray(emptyList()).toString())
+        return emptySet()
     }
 
     private fun writeText(path: Path, text: String?) {

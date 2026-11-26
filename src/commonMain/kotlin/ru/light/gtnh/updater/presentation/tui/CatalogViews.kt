@@ -24,10 +24,21 @@ private val PackChannel.displayName: String
         PackChannel.DAILY -> "Daily"
     }
 
-internal fun renderChannels(terminal: Terminal, channels: List<PackChannel>, cursor: Int, canResume: Boolean, canRollback: Boolean) {
+internal fun renderChannels(
+    terminal: Terminal,
+    channels: List<PackChannel>,
+    cursor: Int,
+    canResume: Boolean,
+    canRollback: Boolean,
+    recoveryErrors: List<String> = emptyList(),
+) {
     val rows = buildList {
         add(" GTNH UPDATER  /  Prism & MultiMC" to HIGHLIGHT)
         add("" to "")
+        val width = (terminal.size.width - TERMINAL_EDGE_MARGIN - 1).coerceAtLeast(1)
+        for (error in recoveryErrors) {
+            terminal.wrapReviewLine(error.terminalText(), width).forEach { add(" $it" to SECTION_STYLE) }
+        }
         add(" CHANNELS" to SECTION_STYLE)
         for ((index, channel) in channels.withIndex()) {
             val selected = cursor == index

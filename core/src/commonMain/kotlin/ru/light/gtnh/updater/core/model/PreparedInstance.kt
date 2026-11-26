@@ -17,7 +17,7 @@ data class PreparedInstance(
 class TestedInstance internal constructor(internal val prepared: PreparedInstance)
 
 enum class UpdateStage {
-    PREPARED, REGISTERED, TEST_STARTED, TEST_CONFIRMED,
+    PREPARED, REGISTERED, TEST_STARTED, TEST_CONFIRMED, NEW_CONFIGS_SELECTED,
     MIGRATED_TEST_STARTED, MIGRATED_TEST_CONFIRMED,
     ACTIVATING, ACTIVATED, ROLLING_BACK, ROLLED_BACK,
 
@@ -25,7 +25,8 @@ enum class UpdateStage {
 
     internal val canResume: Boolean
         get() = when (this) {
-            PREPARED, REGISTERED, TEST_STARTED, TEST_CONFIRMED, MIGRATED_TEST_STARTED, MIGRATED_TEST_CONFIRMED -> true
+            PREPARED, REGISTERED, TEST_STARTED, TEST_CONFIRMED, NEW_CONFIGS_SELECTED,
+            MIGRATED_TEST_STARTED, MIGRATED_TEST_CONFIRMED -> true
             ACTIVATING, ACTIVATED, ROLLING_BACK, ROLLED_BACK -> false
         }
 }

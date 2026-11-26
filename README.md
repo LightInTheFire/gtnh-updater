@@ -148,6 +148,14 @@ offline. It checks the ID format. Check archive availability at the source.
 
 ## Prepare a candidate instance
 
+After preparation, press **F9: Keep new configs** to keep the target pack's
+configuration files and mods without launching Minecraft. Choose the player
+data folders to transfer, then activate the update as usual. Minecraft settings
+such as enabled resource packs are kept from the new pack by default. Use F5
+in the folder picker to transfer the old Minecraft settings. The previous
+instance remains available for rollback. Use the Prism test flow if you
+want to review config differences or transfer extra mods.
+
 After downloading a ZIP in the TUI, press Enter to open the instance picker.
 It detects instances in common Prism Launcher and MultiMC data directories,
 including folders configured in either launcher. Type part of a name or path
@@ -196,13 +204,24 @@ The file list is on the left and the selected file's changes are on
 the right. On narrow terminals the panels stack vertically. Press Tab to
 switch focus and Up or Down to move in the focused panel. Press Left to
 keep the old value or Right to keep the new value. PgUp and PgDn scroll the
-preview. Config choices and F10 require a terminal at least 44 columns
-wide and 16 rows high when changes are present. Type part of a file name
+preview. Config choices and F10 require a terminal at least 24 columns
+wide and 12 rows high when changes are present. Type part of a file name
 or path to filter the list. Backspace
 edits the filter, and Escape clears it before closing the screen. F5 selects
 the new side for every change. Close Minecraft in both instances before
-pressing F10. It copies player data and applies config choices in the same
-operation, including choices for files outside the current filter.
+pressing F10 to choose which player data folders to skip. Use Up or Down
+to navigate and Space to toggle a folder, such as `screenshots/wayfarmap`.
+The updater remembers those choices for future transfers. Press Enter to
+copy the selected player data and apply all config choices, including choices
+outside the current filter. During migration the progress bar shows
+completed steps, the current data entry, and the number of files copied.
+In the regular review flow, compatible Angelica font settings are carried
+over automatically. The review still shows changes to other Angelica
+settings and font values the new config cannot accept.
+During config comparison, the progress bar shows files checked and the
+current file after the updater collects the list of configs.
+Press Esc to cancel the transfer and wait for cleanup. Ctrl+Esc also exits
+after cleanup.
 If the updater exits during migration, reopening it restores the test
 instance's pre-migration files unless the migration already completed.
 Use F6 to resume after recovery.
@@ -215,6 +234,8 @@ are preselected. For an instance without an inventory, select the JARs you
 added. The target pack's own mod versions are kept.
 After migration, press Enter to continue to activation or Escape to
 return to the channel menu. From the channel menu, press F6 to resume.
+For Prism instances, F2 launches the migrated candidate for an optional
+check before activation.
 Press F7 or Enter to review activation. Quit Minecraft and fully exit Prism
 Launcher before pressing Y. An open launcher can overwrite the display names
 with cached values. The migrated instance takes over the original path and the

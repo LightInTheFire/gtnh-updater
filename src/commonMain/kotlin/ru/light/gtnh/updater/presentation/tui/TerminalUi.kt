@@ -3,6 +3,7 @@ package ru.light.gtnh.updater.presentation.tui
 import com.github.ajalt.mordant.input.KeyboardEvent
 import com.github.ajalt.mordant.input.isCtrlC
 import com.github.ajalt.mordant.terminal.Terminal
+import com.github.ajalt.mordant.widgets.Text
 import kotlin.time.Duration.Companion.milliseconds
 
 private const val ESC = "\u001b"
@@ -31,6 +32,27 @@ internal fun KeyboardEvent.requestsExit(): Boolean =
 
 internal fun String.terminalText(): String = filterNot(Char::isISOControl)
 
+internal fun Terminal.fitTerminalCells(text: String, width: Int): Pair<String, Int> {
+    if (width <= 0) return "" to 0
+    val prefix = text.take(width).trimIncompleteSurrogate()
+    if (prefix.all { it in ' '..'~' }) return prefix to prefix.length
+    fun cells(value: String): Int = Text(value).measure(this, width).max
+    val prefixCells = cells(prefix)
+    if (prefixCells <= width) return prefix to prefixCells
+    var low = 0
+    var high = prefix.length
+    while (low < high) {
+        val middle = (low + high + 1) / 2
+        if (cells(prefix.take(middle).trimIncompleteSurrogate()) <= width) low = middle
+        else high = middle - 1
+    }
+    val fitted = prefix.take(low).trimIncompleteSurrogate()
+    return fitted to cells(fitted)
+}
+
+private fun String.trimIncompleteSurrogate(): String =
+    if (lastOrNull()?.isHighSurrogate() == true) dropLast(1) else this
+
 internal data class TerminalRow(
     val left: Pair<String, String>,
     val right: Pair<String, String>? = null,
@@ -57,15 +79,16 @@ internal fun renderScreenRows(terminal: Terminal, rows: List<TerminalRow>, contr
         fun appendCell(cell: Pair<String, String>, cellWidth: Int, fill: Boolean = false) {
             val (text, style) = cell
             if (style.isNotEmpty()) append("$ESC[${style}m")
-            append(text.take(cellWidth))
-            if (fill || style == HIGHLIGHT) append(" ".repeat((cellWidth - text.length).coerceAtLeast(0)))
+            val (fitted, cells) = terminal.fitTerminalCells(text, cellWidth)
+            append(fitted)
+            if (fill || style == HIGHLIGHT) append(" ".repeat((cellWidth - cells).coerceAtLeast(0)))
         }
 
         append(CURSOR_HOME)
         for ((index, item) in frame.take(height).withIndex()) {
             if (index > 0) append("\r\n")
             val right = item.right
-            if (right == null) {
+            if (right == null || width < MIN_SPLIT_ROW_WIDTH) {
                 appendCell(item.left, width)
             } else {
                 val separator = " │ "
@@ -80,3 +103,5 @@ internal fun renderScreenRows(terminal: Terminal, rows: List<TerminalRow>, contr
     }
     terminal.rawPrint(screen)
 }
+
+private const val MIN_SPLIT_ROW_WIDTH = 4

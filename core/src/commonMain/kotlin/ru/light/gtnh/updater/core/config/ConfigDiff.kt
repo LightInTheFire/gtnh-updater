@@ -5,6 +5,12 @@ import okio.Path
 
 enum class ConfigChoice { OLD, NEW }
 
+data class ConfigComparisonProgress(
+    val checkedFiles: Int,
+    val totalFiles: Int,
+    val currentFile: String?,
+)
+
 class ConfigChange internal constructor(
     val id: String,
     val path: String,
@@ -22,6 +28,8 @@ class ConfigReview internal constructor(
     val skipped: List<String>,
     val playerData: List<String> = emptyList(),
     val migrationComplete: Boolean = false,
+    val playerFolders: List<String> = emptyList(),
+    val ignoredPlayerFolders: Set<String> = emptySet(),
 ) {
     val changes: List<ConfigChange> = files.flatMap { it.edits.map(ConfigEdit::change) }
 }
@@ -34,6 +42,7 @@ internal data class ConfigFile(
     val edits: List<ConfigEdit>,
     val annotations: Map<Int, List<String>> = emptyMap(),
     val json: JsonConfig? = null,
+    val expectedTarget: String? = after,
 )
 
 internal data class ConfigEdit(val change: ConfigChange, val start: Int, val end: Int, val old: List<String>)
